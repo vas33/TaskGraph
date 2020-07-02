@@ -1,8 +1,16 @@
 #pragma once
 #include "task_base.h"
+#include <algorithm>
 #include <set>
+#include <stack>
 #include <queue>
 #include <unordered_set>
+
+unsigned int GetNumCPU()
+{	
+	auto numCPUS = std::thread::hardware_concurrency();
+	return 	numCPUS > 1 ? numCPUS : 1;
+}
 
 template<typename InputType, typename OutputType>
 class TaskNode : public TaskBase, public TaskResult<OutputType>
@@ -153,7 +161,7 @@ class TaskGraph
 	std::map<TaskId, std::vector<TaskId>> _taskChildren;
 	unsigned int _maxRunningTasks{ 1 };
 public:
-	TaskGraph(unsigned int runningTasks):
+	TaskGraph(unsigned int runningTasks = GetNumCPU()) :
 		_taskController(std::make_shared<TaskController>()),
 		_maxRunningTasks(runningTasks)
 	{
@@ -163,13 +171,66 @@ public:
 	{
 		AddToTasks(task);
 
-		AddToPendingTasks(task->GetTaskId());		
+		AddToPendingTasks(task->GetTaskId());
 	}
 
 	void AddTaskEdge(const TaskRef parent, TaskRef child)
 	{
 		AddToTasks(child);
 		AddTaskChild(parent->GetTaskId(), child->GetTaskId());
+	}
+
+	void AddTaskEdge(std::vector<TaskRef> parents, TaskRef child)
+	{
+		AddToTasks(child);
+
+		for (const auto& parent : parents)
+		{
+			AddTaskChild(parent->GetTaskId(), child->GetTaskId());
+		}
+		
+
+	}
+
+
+	void PrintTaksExecution()
+	{
+		//Topologic sort tasks
+		std::set<TaskId> visited;
+		std::stack<TaskId> tasksOrder;
+
+		auto pendingTasks = _pendingTasks;
+		while (!pendingTasks.empty())
+		{
+			auto taskToProcess = pendingTasks.front();
+			pendingTasks.pop();
+
+			std::function<void(TaskId)> DFSTask = [&](TaskId task)
+			{
+				visited.emplace(task);
+				for (auto childTask : _taskChildren[task])
+				{
+					if (visited.find(childTask) == visited.end())
+					{
+						DFSTask(childTask);
+					}
+				}
+
+				tasksOrder.push(task);
+			};
+
+
+			DFSTask(taskToProcess);
+
+		}
+
+		std::cout << "\nTasks execution order \n";
+		while (!tasksOrder.empty())
+		{
+			std::cout<<" "<<tasksOrder.top()<<", ";
+
+			tasksOrder.pop();
+		}
 	}
 
 	void WaitAll()

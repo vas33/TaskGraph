@@ -108,8 +108,8 @@ ImagePtr applyGammaParallel(ImagePtr image_ptr, double gamma) {
 	const int height = in_rows.size();
 	const int width = in_rows[1] - in_rows[0];
 
-	//TaskGraph graph(5);
-	ParallelReduce<int, 5>(height,
+	TaskGraph graph;
+	ParallelReduce<int>(graph, height,
 		[&in_rows, &out_rows, width, gamma](unsigned int chunk)->int
 	{
 		auto in_row = in_rows[chunk];
@@ -137,7 +137,10 @@ ImagePtr applyGammaParallel(ImagePtr image_ptr, double gamma) {
 		return 0;
 	}
 	);
-	//graph.WaitAll();
+
+
+	graph.PrintTaksExecution();
+	graph.WaitAll();
 	return output_image_ptr;
 }
 
@@ -188,10 +191,10 @@ void Test4()
 		return 0;
 	};
 
-	TaskGraph graph(5);
+	TaskGraph graph;
 
 	AddTaskSequence<int>(graph, initialize, doubleResult, plusOne);
-
+	graph.PrintTaksExecution();
 	graph.WaitAll();
 	cout << "Resut " << result<<"\n";
 
@@ -202,7 +205,7 @@ int main()
 {
 	//Test1();
 	//Test2();
-	//Test3();
+	Test3();
 	Test4();
 
 	cout << "\nType a word and pres [Enter] to exit\n";

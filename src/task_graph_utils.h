@@ -93,7 +93,7 @@ void ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
 		graph.AddTask(parTask);
 	}
 
-	graph.AddTask(reduceTask);
+	graph.AddTaskEdge(parTasks, reduceTask);
 }
 
 template <typename OutputType, unsigned int numThreads = 5, typename CallableType, typename ReduceCallableType>
