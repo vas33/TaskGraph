@@ -1,5 +1,6 @@
 #pragma once
 #include "task_graph.h"
+#include "task_items.h"
 
 template <typename OutputType, typename FirstCallable, typename  ... Callables>
 void AddTaskSequence(TaskGraph& graph, FirstCallable&& firstCallable,  Callables&& ... callables)
@@ -67,7 +68,7 @@ void ParallelFor(unsigned int chunksCount, CallableType&& callable)
 
 
 template <typename OutputType, typename CallableType, typename ReduceCallableType>
-void ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
+TaskRef ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
 	CallableType&& callable,
 	ReduceCallableType && reduceCallable)
 {
@@ -93,7 +94,9 @@ void ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
 		graph.AddTask(parTask);
 	}
 
-	graph.AddTask(reduceTask);
+	graph.AddTaskEdges(parTasks, reduceTask);
+
+	return reduceTask;
 }
 
 template <typename OutputType, unsigned int numThreads = 5, typename CallableType, typename ReduceCallableType>

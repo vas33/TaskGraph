@@ -1,8 +1,6 @@
 // TaskGraph.cpp : Defines the entry point for the console application.
 //
 
-#include "stdafx.h"
-
 #include <iostream>
 #include <map>
 
@@ -41,7 +39,6 @@ void Test1()
 			auto  node = make_shared<InitialTaskNode<int>>(
 				[]()->int
 			{
-				//std::this_thread::sleep_for(1000ms);
 				return 500;
 			}
 			);
@@ -66,6 +63,7 @@ void Test1()
 
 	graph.AddTask(prduceSomeInt);
 	graph.AddTaskEdge(prduceSomeInt, task2);
+	
 	graph.WaitAll();
 
 	cout << "result " << task2->GetResult() << " \n";
@@ -79,11 +77,11 @@ void Test2()
 
 	const int numTasks = 5;
 	std::map<int, std::vector<int>> mapVectors;
-
-	ParallelFor<int, 5>(numTasks,
+	TaskGraph graph;
+	ParallelFor<int>(graph, numTasks,
 		[&](int chunk)->int
 		{
-			for (int i = 0; i < 10000;i++)
+			for (int i = 0; i < 100;i++)
 			{
 				cout << "Add chunk " << chunk << " value " << i << "\n";
 				mapVectors[chunk].push_back(i);
@@ -92,11 +90,9 @@ void Test2()
 		}
 	);
 
-
+	graph.PrintTasksExecution();
 	cout << "\nTest2 Done\n";
 }
-
-
 
 using ImagePtr = std::shared_ptr<ch01::Image>;
 ImagePtr applyGammaParallel(ImagePtr image_ptr, double gamma) {
@@ -108,8 +104,9 @@ ImagePtr applyGammaParallel(ImagePtr image_ptr, double gamma) {
 	const int height = in_rows.size();
 	const int width = in_rows[1] - in_rows[0];
 
-	//TaskGraph graph(5);
-	ParallelReduce<int, 5>(height,
+	TaskGraph graph;
+
+	ParallelReduce<int>(graph, height,
 		[&in_rows, &out_rows, width, gamma](unsigned int chunk)->int
 	{
 		auto in_row = in_rows[chunk];
@@ -137,6 +134,8 @@ ImagePtr applyGammaParallel(ImagePtr image_ptr, double gamma) {
 		return 0;
 	}
 	);
+
+	graph.PrintTasksExecution();
 	//graph.WaitAll();
 	return output_image_ptr;
 }
@@ -165,7 +164,7 @@ void Test3()
 
 void Test4()
 {
-	cout << "Test4 4 Start \n";
+	cout << "\nTest4 4 Start \n";
 
 	int result = 0;
 
@@ -192,7 +191,8 @@ void Test4()
 
 	AddTaskSequence<int>(graph, initialize, doubleResult, plusOne);
 
-	graph.WaitAll();
+	graph.PrintTasksExecution();
+	//graph.WaitAll();
 	cout << "Resut " << result<<"\n";
 
 	cout << "Test4 4 Done \n";
@@ -200,10 +200,10 @@ void Test4()
 
 int main()
 {
-	//Test1();
+	Test1();
 	//Test2();
 	//Test3();
-	Test4();
+	//Test4();
 
 	cout << "\nType a word and pres [Enter] to exit\n";
 	char z;

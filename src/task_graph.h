@@ -4,157 +4,103 @@
 #include <queue>
 #include <unordered_set>
 
-template<typename InputType, typename OutputType>
-class TaskNode : public TaskBase, public TaskResult<OutputType>
+class WorkerThread
 {
-	using TaskCallable = std::function<OutputType(InputType)>;
-
-	std::shared_ptr<TaskBase> _prev;
-	TaskCallable _callable;
-	OutputType _result;
-
+	std::shared_ptr<TaskController> _controller;
+	std::queue<TaskRef>  _tasks{};
+	unsigned int _threadNumber{ 0 };
 public:
-	explicit TaskNode(std::shared_ptr<TaskBase> prev, TaskCallable callable) :
-		_prev(prev),
-		_callable(callable)
+	explicit WorkerThread(unsigned int threadNumber) :_threadNumber(threadNumber)
 	{
 	}
 
-	TaskNode(const TaskNode&) = delete;
-	TaskNode& operator = (const TaskNode&) = delete;
+	WorkerThread(const WorkerThread& other)= delete;
 
-	void ExecuteInt() override
+	WorkerThread&  operator=(WorkerThread& other) = delete;
+
+	WorkerThread&  operator=(WorkerThread&& other) = delete;
+	
+
+	WorkerThread(const WorkerThread&& other)
 	{
-		auto resultGetter = std::dynamic_pointer_cast<TaskResult<InputType>>(_prev);
-		auto caller = [&]
+		_threadNumber = other._threadNumber;
+
+		while (!other._tasks.empty())
 		{
-			_result = _callable(resultGetter->GetResult());
-			_taskController->SignalTaskReady(GetTaskId());
-		};
-
-		std::thread th(caller);
-		th.detach();
-	}
-
-	OutputType GetResult() override
-	{
-		return _result;
-	}
-};
-
-template<typename OutputType>
-class InitialTaskNode :public TaskBase, public TaskResult<OutputType>
-{
-	using TaskCallable = std::function<OutputType()>;
-	TaskCallable _callable;
-	std::promise<OutputType> _resultGetter;
-public:
-
-	explicit InitialTaskNode(TaskCallable callable) :_callable(callable)
-	{
-	}
-
-	OutputType GetResult()
-	{
-		return _resultGetter.get_future().get();
-	}
-
-	void ExecuteInt() override
-	{
-		auto runner = [&]()
-		{
-			_resultGetter.set_value_at_thread_exit(_callable());
-			_taskController->SignalTaskReady(GetTaskId());
-		};
-
-		std::thread th(runner);
-		th.detach();
-	}
-};
-
-template<typename OutputType>
-class ParallelTaskNode : public TaskBase, public TaskResult<OutputType>
-{
-	using TaskCallable = std::function<OutputType(unsigned int)>;
-	unsigned int _chunk;
-	TaskCallable _callable;
-	std::promise<OutputType> _resultGetter;
-public:
-	explicit ParallelTaskNode(unsigned int chunk, TaskCallable callable):
-		_chunk(chunk),_callable(callable)
-	{
-	}
-
-	OutputType GetResult() override
-	{
-		return _resultGetter.get_future().get();
-	}
-	void ExecuteInt() override
-	{
-		auto runner = [&]()
-		{
-			_resultGetter.set_value_at_thread_exit(_callable(_chunk));
-			_taskController->SignalTaskReady(GetTaskId());
-		};
-
-		std::thread th(runner);
-		th.detach();
-	}
-};
-
-template<typename OutputType>
-class MultiJoinTaskNode:public TaskBase, public TaskResult<OutputType>
-{
-	using TaskCallable = std::function<OutputType()>;
-	TaskCallable _callable;
-	std::promise<OutputType> _resultGetter;
-	std::set<TaskId> _prevTaskIds;
-public:
-	explicit MultiJoinTaskNode(TaskCallable callable, const std::vector<TaskRef>& prevTasks) : _callable(callable)
-	{
-		for(const auto& task: prevTasks)
-		{					
-			_prevTaskIds.emplace(task->GetTaskId());
+			_tasks.emplace(other._tasks.front());
 		}
+		
+		_controller = other._controller;
 	}
 
-	OutputType GetResult() override
+	~WorkerThread()
 	{
-		return _resultGetter.get_future().get();
 	}
 
-	bool CanRun(TaskId prevtaskId) override
+	void SetController(std::shared_ptr<TaskController>& controller)
 	{
-		//make sure all previous tasks are executed before fetch this one
-		_prevTaskIds.erase(prevtaskId);
-		return _prevTaskIds.size() == 0;
+		_controller = controller;
 	}
 
-	void ExecuteInt() override
+	void Start()
 	{
-		auto runner = [&]()
-		{
-			_resultGetter.set_value_at_thread_exit(_callable());
-			_taskController->SignalTaskReady(GetTaskId());
-		};
-
-		std::thread th(runner);
+		std::thread th(&WorkerThread::DoJobs, this);
 		th.detach();
 	}
+
+private:
+	void DoJobs()
+	{
+		while (true)
+		{
+			//wait for more tasks or if done
+			_controller->WaitForTaskOrDone(_threadNumber);
+			auto&& taskJobs = _controller->GetPendingTasks(_threadNumber);
+			_tasks.swap(taskJobs);
+
+			if (_tasks.empty())			
+			{
+				//we are done exit
+				break;
+			}
+
+			//process tasks
+			while (!_tasks.empty())
+			{	
+				//get next task
+				const TaskRef& task = _tasks.front();
+				_tasks.pop();
+
+				task->Run();
+
+				_controller->SignalTaskReady(task->GetTaskId());
+			}
+		}
+		
+	}
 };
+
+unsigned int GetNumberOfCPUs()
+{
+	auto hardwareConcurrency = std::thread::hardware_concurrency();
+	//hardware_concurrency returns zero sometimes handle it 
+	return hardwareConcurrency ? hardwareConcurrency : 1;	
+}
 
 class TaskGraph
 {
 	std::shared_ptr<TaskController> _taskController;
+	unsigned int _maxRunningTasks{ 1 };
+
 	std::map<TaskId, TaskRef> _tasks;
-	std::unordered_set<TaskId> _runningTasks;
-	std::queue<TaskId> _pendingTasks;
+	std::vector<TaskId> _pendingTasks;
 	std::vector<TaskId> _completedTasks;
 	std::map<TaskId, std::vector<TaskId>> _taskChildren;
-	unsigned int _maxRunningTasks{ 1 };
+	std::vector<WorkerThread> _workerThreads;
+	
 public:
-	TaskGraph(unsigned int runningTasks):
-		_taskController(std::make_shared<TaskController>()),
+	TaskGraph(unsigned int runningTasks = GetNumberOfCPUs()):
+		_taskController(std::make_shared<TaskController>(runningTasks)),
 		_maxRunningTasks(runningTasks)
 	{
 	}
@@ -172,37 +118,99 @@ public:
 		AddTaskChild(parent->GetTaskId(), child->GetTaskId());
 	}
 
-	void WaitAll()
+	void AddTaskEdges(const std::vector<TaskRef>& parents, TaskRef child)
 	{
-		while (!AllTasksDone())
+		AddToTasks(child);
+		for (const auto& parentTask : parents)
 		{
-			if (HasFreeRunningSlots() && HasPendingTasks())
+			AddTaskChild(parentTask->GetTaskId(), child->GetTaskId());
+		}
+	}
+
+	void PrintTasksExecution()
+	{
+		std::queue<TaskId> tasksOrder;
+		std::unordered_set<TaskId> visited;
+
+		//BFS on taks
+		for (auto taskId: _pendingTasks)
+		{
+			tasksOrder.emplace(taskId);
+			visited.emplace(taskId);
+		}
+
+		std::cout << "\n\nTasks order \n\n";
+
+		while (!tasksOrder.empty())
+		{
+			auto taskId = tasksOrder.front();
+			tasksOrder.pop();
+			
+			std::cout << " " << taskId << ", ";
+
+			for (auto childTaskId : _taskChildren[taskId])
 			{
-				RunOneTask();
-			}
-			else
-			{
-				//wait for ready task
-				WaitForReadyTasks();
+				if (visited.find(childTaskId) == visited.end())
+				{
+					tasksOrder.emplace(childTaskId);
+					visited.emplace(childTaskId);
+				}
 			}
 		}
 	}
+
+
+	void WaitAll()
+	{		
+		StartWorkerThreads();
+
+		while (!AllTasksDone())
+		{
+			if (HasPendingTasks())
+			{
+				SchedulePendingTasks();
+			}
+			else
+			{
+				WaitForReadyTasks();
+			}
+		}
+
+		//shutdown threads
+		DoneAndExit();
+	}
+private:
+	void DoneAndExit()
+	{
+		_taskController->SignalReadyToExit();
+		//wait some time for worker threads to exit
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+
+	void StartWorkerThreads()
+	{
+		for (int threadIndex = 0; threadIndex < _maxRunningTasks; ++threadIndex)
+		{				
+			_workerThreads.emplace_back(threadIndex);
+		}
+
+		for (auto& wt : _workerThreads)
+		{
+			wt.SetController(_taskController);
+			wt.Start();
+		}
+	}
+
 private:
 	//add to global tasks collection
 	void AddToTasks(TaskRef& task)
 	{
-		AttachController(task);
 		_tasks.emplace(task->GetTaskId(), task);
 	}
 	
-	void AttachController(TaskRef& task)
-	{
-		task->SetTaskController(_taskController);
-	}
-
 	void AddToPendingTasks(TaskId id)
 	{
-		_pendingTasks.emplace(id);
+		_pendingTasks.emplace_back(id);
 	}
 
 	void AddTaskChild(TaskId parentId, TaskId childId)
@@ -213,11 +221,6 @@ private:
 	bool AllTasksDone() const
 	{
 		return _completedTasks.size() == _tasks.size();
-	}
-
-	bool HasFreeRunningSlots() const
-	{		
-		return _maxRunningTasks > _runningTasks.size();
 	}
 
 	bool HasPendingTasks() const
@@ -243,42 +246,23 @@ private:
 		}
 	}
 
-	void AddTaskRunning(TaskId taskId)
-	{
-		_runningTasks.emplace(taskId);
-	}
-
-	void RemoveRunningTask(TaskId taskId)
-	{
-		_runningTasks.erase(taskId);
-	}
-
-
 	void WaitForReadyTasks()
 	{
-		auto readyTasks = _taskController->WaitTillReadyTask();
+		auto readyTasks = move(_taskController->WaitTillReadyTask());
 
 		//fetch next tasks
 		for(auto readyTaskId:readyTasks)
 		{
-			RemoveRunningTask(readyTaskId);
-
 			FetchTaskChildren(readyTaskId);
 
 			CompleteTask(readyTaskId);
 		}		
 	}
 
-	void RunOneTask()
-	{
-		//pop next running task
-		auto runningTaskId = _pendingTasks.front();
-		_pendingTasks.pop();
+	void SchedulePendingTasks()
+	{		
+		_taskController->AddTaskJobs(move(_pendingTasks), _tasks);
 
-		//put to running tasks
-		AddTaskRunning(runningTaskId);		
-
-		const auto& task = _tasks[runningTaskId];
-		task->Run();
+		_pendingTasks.clear();
 	}
 };
