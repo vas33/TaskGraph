@@ -102,7 +102,7 @@ public:
 
 	bool CanRun(TaskId prevtaskId) override
 	{
-		//make sure all previous tasks are executed before fetch this one
+		//make sure all previous tasks are executed before fetching this one
 		_prevTaskIds.erase(prevtaskId);
 		return _prevTaskIds.size() == 0;
 	}

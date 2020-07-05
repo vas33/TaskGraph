@@ -1,4 +1,5 @@
 #pragma once
+#include <bitset>
 #include <future>
 #include <thread>
 #include <vector>
@@ -16,6 +17,100 @@ template <typename OutputType>
 struct TaskResult
 {
 	virtual OutputType GetResult() = 0;
+};
+
+//TODO make itearator for TaskAffinity
+class TaskAffinity
+{
+	std::bitset<24> _affinityBits;
+
+public:
+	TaskAffinity(){}
+	TaskAffinity(std::initializer_list<unsigned int> affinities)
+	{
+		SetAffinity(affinities);
+	}
+
+	unsigned int GetFirstAffinity() const
+	{
+		unsigned int bitNumber = 0;
+
+		while (bitNumber < _affinityBits.size() && !_affinityBits.test(bitNumber))
+		{
+			++bitNumber;
+		}
+
+		return bitNumber >= _affinityBits.size() ? 0: bitNumber;
+	}
+
+	unsigned int GetNextAffinity(unsigned int prevAffinityNumber) const
+	{
+		unsigned int bitNumber = prevAffinityNumber;
+
+		do
+		{
+			++bitNumber;
+		} while (bitNumber < _affinityBits.size() && !_affinityBits.test(bitNumber));
+			
+		return bitNumber < _affinityBits.size() ? bitNumber : GetFirstAffinity();
+	}
+
+	bool HasAffinity() const
+	{
+		return _affinityBits.any();
+	}
+
+	void SetAffinity(std::initializer_list<unsigned int> affinities)
+	{
+		for (unsigned int affinity : affinities)
+		{
+			if (_affinityBits.size() > affinity)
+			{
+				_affinityBits.set(affinity, true);
+			}
+		}
+	}
+};
+
+class TaskBase
+{
+protected:
+	TaskAffinity _affinity;
+	TaskId GetNextTaskId() const
+	{
+		static unsigned int id = 1;
+		return id++;
+	}
+	TaskId _taskId = GetNextTaskId();
+
+	virtual void ExecuteInt() = 0;
+
+public:
+	TaskId GetTaskId() const
+	{
+		return _taskId;
+	}
+
+	virtual bool CanRun(TaskId prevTaskId)
+	{
+		return true;
+	}
+
+	TaskId Run()
+	{
+		ExecuteInt();
+		return GetTaskId();
+	}
+
+	void SetAffinity(const std::initializer_list<unsigned int>& affinities)
+	{
+		_affinity.SetAffinity(affinities);
+	}
+
+	const TaskAffinity& GetAffinity() const
+	{
+		return _affinity;
+	}
 };
 
 class TaskController
@@ -72,9 +167,22 @@ public:
 
 			for (const auto taskId:taskIds)
 			{
-				auto task = tasks.find(taskId);
+				const auto task = tasks.find(taskId);
 
-				_taskJobs[_threadNumberToAddTask++].emplace(task->second);
+				//no affinity add to next thread
+				if (!task->second->GetAffinity().HasAffinity())
+				{
+					_taskJobs[_threadNumberToAddTask++].emplace(task->second);
+				}
+				//get affinity of task
+				else
+				{
+					unsigned int Affinity = task->second->GetAffinity().GetFirstAffinity();
+					Affinity = Affinity < _numThreads ? Affinity : _threadNumberToAddTask++;
+					
+					_taskJobs[Affinity].emplace(task->second);
+				}
+								
 				
 				if (_threadNumberToAddTask >= _numThreads)
 				{
@@ -102,35 +210,15 @@ public:
 		}
 		_cvReadyTasks.notify_one();
 	}
-};
 
-class TaskBase
-{
-protected:
-	TaskId GetNextTaskId() const
+	void Clear()
 	{
-		static unsigned int id = 1;
-		return id++;
-	}
-	TaskId _taskId = GetNextTaskId();
+		std::lock(_mutex, _mutexReadyTasks);
 
-	virtual void ExecuteInt() = 0;
+		const std::lock_guard<std::mutex> l1(_mutex, std::adopt_lock);
+		const std::lock_guard<std::mutex> l2(_mutexReadyTasks, std::adopt_lock);
 
-public:
-	TaskId GetTaskId() const
-	{
-		return _taskId;
-	}
-
-	virtual bool CanRun(TaskId prevTaskId)
-	{
-		return true;
-	}
-
-	TaskId Run()
-	{
-		ExecuteInt();
-		return GetTaskId();
+		_readyTasks.clear();
+		_readyToExit = false;		
 	}
 };
-

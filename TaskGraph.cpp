@@ -1,5 +1,6 @@
 // TaskGraph.cpp : Defines the entry point for the console application.
 //
+#include <assert.h>
 
 #include <iostream>
 #include <map>
@@ -15,7 +16,7 @@ using namespace std;
 void Test1()
 {
 	cout << "\n Test 1 start \n";
-	TaskGraph graph(5);
+	TaskGraph graph;
 
 	int result = 0;
 
@@ -33,7 +34,7 @@ void Test1()
 		[&](int input) ->int
 	{
 
-			TaskGraph subGraph(2);
+			TaskGraph subGraph(1);
 			////add dynamic task
 			////Spawn th 3
 			auto  node = make_shared<InitialTaskNode<int>>(
@@ -61,11 +62,13 @@ void Test1()
 	}
 	);
 
+	prduceSomeInt->SetAffinity({ 2 });
 	graph.AddTask(prduceSomeInt);
 	graph.AddTaskEdge(prduceSomeInt, task2);
 	
 	graph.WaitAll();
 
+	assert(task2->GetResult() == 40000501);
 	cout << "result " << task2->GetResult() << " \n";
 
 	cout << "\n Test 1 done \n";
@@ -87,30 +90,28 @@ void Test2()
 				mapVectors[chunk].push_back(i);
 			}
 			return 0;
-		}
+		},
+		{ 1,2,3,4,5 }
 	);
 
-	graph.PrintTasksExecution();
+	//graph.PrintTasksExecution();
+	graph.WaitAll();
 	cout << "\nTest2 Done\n";
 }
 
 using ImagePtr = std::shared_ptr<ch01::Image>;
-ImagePtr applyGammaParallel(ImagePtr image_ptr, double gamma) {
-	auto output_image_ptr =
-		std::make_shared<ch01::Image>(image_ptr->name() + "_gamma",
-			ch01::IMAGE_WIDTH, ch01::IMAGE_HEIGHT);
-	auto in_rows = image_ptr->rows();
-	auto out_rows = output_image_ptr->rows();
-	const int height = in_rows.size();
-	const int width = in_rows[1] - in_rows[0];
+auto applyGamma(TaskGraph& graph, TaskRef& parentTask, ImagePtr& image_ptr, ImagePtr& output_image_ptr, double gamma) {
+	
+	const int height = ch01::IMAGE_HEIGHT;
 
-	TaskGraph graph;
-
-	ParallelReduce<int>(graph, height,
-		[&in_rows, &out_rows, width, gamma](unsigned int chunk)->int
+	return ParallelReduce<int>(graph, parentTask, height,
+		[&image_ptr, &output_image_ptr, gamma](unsigned int chunk)->int
 	{
-		auto in_row = in_rows[chunk];
-		auto out_row = out_rows[chunk];
+		auto in_rows = image_ptr->rows();
+		const int width = in_rows[1] - in_rows[0];
+		
+		auto in_row = image_ptr->rows()[chunk];
+		auto out_row = output_image_ptr->rows()[chunk];
 
 		//transform
 		std::transform(in_row, in_row + width,
@@ -130,34 +131,94 @@ ImagePtr applyGammaParallel(ImagePtr image_ptr, double gamma) {
 
 		output_image_ptr->write(outputPath.c_str());
 
-		cout << "All tasks done\n";
+		std::cout << "Gama tasks done\n";
 		return 0;
 	}
-	);
+	);	
+}
 
-	graph.PrintTasksExecution();
-	//graph.WaitAll();
-	return output_image_ptr;
+auto applyTint(TaskGraph& graph, TaskRef& parentTask, ImagePtr& image_ptr, ImagePtr& output_image_ptr, const double *tints) {
+	
+	//auto in_rows = image_ptr->rows();
+	//const int height = in_rows.size();
+	const int height = ch01::IMAGE_HEIGHT;
+
+	return ParallelReduce<int>(graph, parentTask, height,
+		[&image_ptr, &output_image_ptr, tints](unsigned int chunk)->int
+	{
+		auto in_rows = image_ptr->rows();
+		auto out_rows = output_image_ptr->rows();
+		const int width = in_rows[1] - in_rows[0];
+
+		auto in_row = in_rows[chunk];
+		auto out_row = out_rows[chunk];
+	
+		std::transform(in_row, in_row + width,
+			out_row, [tints](const ch01::Image::Pixel& p) {
+			std::uint8_t b = (double)p.bgra[0] +
+				(ch01::MAX_BGR_VALUE - p.bgra[0])*tints[0];
+			std::uint8_t g = (double)p.bgra[1] +
+				(ch01::MAX_BGR_VALUE - p.bgra[1])*tints[1];
+			std::uint8_t r = (double)p.bgra[2] +
+				(ch01::MAX_BGR_VALUE - p.bgra[2])*tints[2];
+			return ch01::Image::Pixel(
+				(b > ch01::MAX_BGR_VALUE) ? ch01::MAX_BGR_VALUE : b,
+				(g > ch01::MAX_BGR_VALUE) ? ch01::MAX_BGR_VALUE : g,
+				(r > ch01::MAX_BGR_VALUE) ? ch01::MAX_BGR_VALUE : r
+				);
+		});
+
+		return 0;
+	},
+	[&output_image_ptr]()->int
+	{
+		string outputPath("./");
+		outputPath.append(output_image_ptr->name());
+		outputPath.append(".png");
+
+		output_image_ptr->write(outputPath.c_str());
+
+		std::cout << "Tint tasks done\n";
+		return 0;
+	});
 }
 
 void Test3()
 {
 	cout << "\n\nTest 3 start ..\n";
-	cout << "Generating fractal image..\n";
+	cout << "Generating fractal image(serial)..\n";
 
-	ImagePtr image(ch01::makeFractalImage(20000));
+	TaskGraph graph;
+	ImagePtr image;
+	auto imageWithGamma =
+		std::make_shared<ch01::Image>("fractal_gamma",
+			ch01::IMAGE_WIDTH, ch01::IMAGE_HEIGHT);
 
-	if(!image)
-	{
-		return;
-	}
-	
-	//save original image image
-	image->write("./fractal0.png");
+	auto imageWithTint =
+		std::make_shared<ch01::Image>("fractal_tinted",
+			ch01::IMAGE_WIDTH, ch01::IMAGE_HEIGHT);
 
-	cout << "Apply gamma to image \n";
+	TaskRef generateImageTask = std::make_shared<InitialTaskNode<int>>
+		(
+			[&image]()->int
+			{
+				image = ch01::makeFractalImage(20000);
+				//save original image image
+				image->write("./fractal0.png");
+				return 0;
+			}
+			);
 
-	applyGammaParallel(image, 1.4f);
+	graph.AddTask(generateImageTask);
+
+	//Apply gamma stage
+	auto gammaTask = applyGamma(graph, generateImageTask, image, imageWithGamma, 1.4f);
+
+	//Apply tint stage
+	const double tint_array[] = { 0.75, 0, 0 };
+	applyTint(graph, gammaTask, imageWithGamma, imageWithTint, tint_array);
+
+	graph.WaitAll();
 
 	cout << "Test 3 Done. \n";
 }
@@ -191,19 +252,21 @@ void Test4()
 
 	AddTaskSequence<int>(graph, initialize, doubleResult, plusOne);
 
-	graph.PrintTasksExecution();
-	//graph.WaitAll();
+	//graph.PrintTasksExecution();
+	graph.WaitAll();
+	
+	assert(result == 201);
 	cout << "Resut " << result<<"\n";
-
 	cout << "Test4 4 Done \n";
 }
 
 int main()
 {
 	Test1();
-	//Test2();
-	//Test3();
-	//Test4();
+	Test2();
+	Test3();
+	Test4();
+
 
 	cout << "\nType a word and pres [Enter] to exit\n";
 	char z;

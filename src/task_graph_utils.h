@@ -39,9 +39,11 @@ void AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, Callable&&  c
 }
 
 template <typename OutputType, typename CallableType>
-void ParallelFor(TaskGraph& graph, unsigned int chunksCount, CallableType&& callable)
+void ParallelFor(TaskGraph& graph, unsigned int chunksCount, CallableType&& callable, TaskAffinity affinity = {})
 {
 	std::vector<TaskRef> tasks;
+	unsigned affinityNumber = 0;
+
 	for (unsigned int taskNumber = 0; taskNumber < chunksCount; ++taskNumber)
 	{
 		auto task = std::make_shared<ParallelTaskNode<OutputType>>
@@ -49,30 +51,39 @@ void ParallelFor(TaskGraph& graph, unsigned int chunksCount, CallableType&& call
 				taskNumber,
 				std::forward<CallableType>(callable)
 		);
+		
+		if (affinity.HasAffinity())
+		{
+			affinityNumber = affinity.GetNextAffinity(affinityNumber);
+
+			task->SetAffinity({ affinityNumber });
+		}
 
 		tasks.push_back(task);
+
 		graph.AddTask(task);
+	
 	}
 }
 
-
 template <typename OutputType, int numThreads = 5, typename CallableType>
-void ParallelFor(unsigned int chunksCount, CallableType&& callable)
+void ParallelFor(unsigned int chunksCount, CallableType&& callable, TaskAffinity affinity = {})
 {
 	TaskGraph graph(numThreads);
 
-	ParallelFor<OutputType, CallableType>(graph, chunksCount, std::forward<CallableType>(callable));
+	ParallelFor<OutputType, CallableType>(graph, chunksCount, std::forward<CallableType>(callable, affinity));
 
 	graph.WaitAll();
 }
 
-
 template <typename OutputType, typename CallableType, typename ReduceCallableType>
-TaskRef ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
+TaskRef ParallelReduce(TaskGraph& graph, TaskRef& parent, unsigned int chnksCount,
 	CallableType&& callable,
-	ReduceCallableType && reduceCallable)
+	ReduceCallableType && reduceCallable, TaskAffinity&& affinity = {})
 {
 	std::vector<TaskRef> parTasks;
+	unsigned affinityNumber = 0;
+
 	for (unsigned int taskNumber = 0; taskNumber < chnksCount; ++taskNumber)
 	{
 		auto task = std::make_shared<ParallelTaskNode<OutputType>>
@@ -80,6 +91,13 @@ TaskRef ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
 				taskNumber,
 				std::forward<CallableType>(callable)
 				);
+
+		if (affinity.HasAffinity())
+		{
+			affinityNumber = affinity.GetNextAffinity(affinityNumber);
+
+			task->SetAffinity({ affinityNumber });
+		}
 
 		parTasks.push_back(task);
 	}
@@ -91,7 +109,15 @@ TaskRef ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
 
 	for (const auto& parTask : parTasks)
 	{
-		graph.AddTask(parTask);
+		//if parent chain tasks after it
+		if (parent)
+		{
+			graph.AddTaskEdge(parent, parTask);
+		}
+		else
+		{
+			graph.AddTask(parTask);
+		}	
 	}
 
 	graph.AddTaskEdges(parTasks, reduceTask);
@@ -102,11 +128,11 @@ TaskRef ParallelReduce(TaskGraph& graph, unsigned int chnksCount,
 template <typename OutputType, unsigned int numThreads = 5, typename CallableType, typename ReduceCallableType>
 void ParallelReduce(unsigned int chunksCount, 
 	CallableType&& callable,
-	ReduceCallableType&& reduceCallable)
+	ReduceCallableType&& reduceCallable, TaskAffinity&& affinity = {})
 {
 	TaskGraph graph(numThreads);
 
-	ParallelReduce<OutputType, CallableType, ReduceCallableType>(graph, chunksCount, std::forward<CallableType>(callable), std::forward<ReduceCallableType>(reduceCallable));
+	ParallelReduce<OutputType, CallableType, ReduceCallableType>(graph, chunksCount, std::forward<CallableType>(callable), std::forward<ReduceCallableType>(reduceCallable), std::forward<TaskAffinity>(affinity));
 
 	graph.WaitAll();
 }

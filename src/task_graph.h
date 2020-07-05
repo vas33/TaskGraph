@@ -19,18 +19,13 @@ public:
 	WorkerThread&  operator=(WorkerThread& other) = delete;
 
 	WorkerThread&  operator=(WorkerThread&& other) = delete;
-	
 
-	WorkerThread(const WorkerThread&& other)
-	{
-		_threadNumber = other._threadNumber;
-
-		while (!other._tasks.empty())
-		{
-			_tasks.emplace(other._tasks.front());
-		}
+	WorkerThread(WorkerThread&& other):
+		_threadNumber(other._threadNumber)
+	{		
+		_tasks.swap(other._tasks);
 		
-		_controller = other._controller;
+		_controller.swap(other._controller);		
 	}
 
 	~WorkerThread()
@@ -159,7 +154,6 @@ public:
 		}
 	}
 
-
 	void WaitAll()
 	{		
 		StartWorkerThreads();
@@ -185,18 +179,24 @@ private:
 		_taskController->SignalReadyToExit();
 		//wait some time for worker threads to exit
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+		_taskController->Clear();
 	}
 
 	void StartWorkerThreads()
-	{
+	{		
+		_workerThreads.clear();
+
 		for (int threadIndex = 0; threadIndex < _maxRunningTasks; ++threadIndex)
 		{				
-			_workerThreads.emplace_back(threadIndex);
+			WorkerThread wth(threadIndex);
+			wth.SetController(_taskController);
+
+			_workerThreads.push_back(std::move(wth));
 		}
 
 		for (auto& wt : _workerThreads)
-		{
-			wt.SetController(_taskController);
+		{	
 			wt.Start();
 		}
 	}
