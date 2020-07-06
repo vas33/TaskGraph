@@ -85,7 +85,7 @@ class MultiJoinTaskNode :public TaskBase, public TaskResult<OutputType>
 	using TaskCallable = std::function<OutputType()>;
 	TaskCallable _callable;
 	OutputType _result;
-	std::set<TaskId> _prevTaskIds;
+	mutable std::set<TaskId> _prevTaskIds;
 public:
 	explicit MultiJoinTaskNode(TaskCallable callable, const std::vector<TaskRef>& prevTasks) : _callable(callable)
 	{
@@ -100,7 +100,7 @@ public:
 		return _result;
 	}
 
-	bool CanRun(TaskId prevtaskId) override
+	bool CanRun(TaskId prevtaskId) const override
 	{
 		//make sure all previous tasks are executed before fetching this one
 		_prevTaskIds.erase(prevtaskId);

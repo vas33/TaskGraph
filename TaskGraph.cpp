@@ -5,16 +5,16 @@
 #include <iostream>
 #include <map>
 
-#include "src\task_graph.h"
-#include "src\task_graph_utils.h"
+#include "src/task_graph.h"
+#include "src/task_graph_utils.h"
 
-#include "ch1.h"
+#include "ext/ch1.h"
 
 
 using namespace std;
 
 void Test1()
-{
+{	
 	cout << "\n Test 1 start \n";
 	TaskGraph graph;
 
@@ -91,7 +91,7 @@ void Test2()
 			}
 			return 0;
 		},
-		{ 1,2,3,4,5 }
+		{ 1 , 2 , 3 ,4 ,5}		
 	);
 
 	//graph.PrintTasksExecution();

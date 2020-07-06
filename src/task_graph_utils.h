@@ -39,7 +39,7 @@ void AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, Callable&&  c
 }
 
 template <typename OutputType, typename CallableType>
-void ParallelFor(TaskGraph& graph, unsigned int chunksCount, CallableType&& callable, TaskAffinity affinity = {})
+void ParallelFor(TaskGraph& graph, unsigned int chunksCount, CallableType&& callable, TaskAffinity&& affinity = {})
 {
 	std::vector<TaskRef> tasks;
 	unsigned affinityNumber = 0;

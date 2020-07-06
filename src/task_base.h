@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <iterator> 
 #include <bitset>
 #include <future>
 #include <thread>
@@ -25,9 +27,11 @@ class TaskAffinity
 	std::bitset<24> _affinityBits;
 
 public:
-	TaskAffinity(){}
+	TaskAffinity()
+	{}
+	
 	TaskAffinity(std::initializer_list<unsigned int> affinities)
-	{
+	{		
 		SetAffinity(affinities);
 	}
 
@@ -61,7 +65,8 @@ public:
 	}
 
 	void SetAffinity(std::initializer_list<unsigned int> affinities)
-	{
+	{		
+		_affinityBits.reset();
 		for (unsigned int affinity : affinities)
 		{
 			if (_affinityBits.size() > affinity)
@@ -69,7 +74,7 @@ public:
 				_affinityBits.set(affinity, true);
 			}
 		}
-	}
+	}	
 };
 
 class TaskBase
@@ -91,7 +96,7 @@ public:
 		return _taskId;
 	}
 
-	virtual bool CanRun(TaskId prevTaskId)
+	virtual bool CanRun(TaskId prevTaskId) const
 	{
 		return true;
 	}
@@ -101,9 +106,9 @@ public:
 		ExecuteInt();
 		return GetTaskId();
 	}
-
+	
 	void SetAffinity(const std::initializer_list<unsigned int>& affinities)
-	{
+	{		
 		_affinity.SetAffinity(affinities);
 	}
 
@@ -121,13 +126,14 @@ class TaskController
 	std::condition_variable _cvReadyTasks;
 	std::mutex _mutexReadyTasks;
 	
-	std::condition_variable _cv;
-	std::mutex _mutex;
+	std::condition_variable _cvJobs;
+	std::mutex _mutexJobs;
 
 	std::vector<TaskId> _readyTasks;
 	bool _readyToExit{ false };
 		
-	std::map<unsigned int, std::queue<TaskRef>> _taskJobs;
+	std::map<unsigned int, std::deque<TaskRef>> _taskJobs;
+	std::queue<unsigned int> _threadsLookingForJob;
 
 public:
 	explicit TaskController(unsigned int NumThreads):_numThreads(NumThreads)
@@ -146,24 +152,49 @@ public:
 		return resultTasks;
 	}
 
-	void WaitForTaskOrDone(unsigned int threadNumber)
+	bool WaitForTaskOrDone(unsigned int threadNumber)
 	{
-		std::unique_lock<std::mutex> guard(_mutex);
+		std::unique_lock<std::mutex> guard(_mutexJobs);
+		
+		_cvJobs.wait(guard, [&]() { return _taskJobs[threadNumber].size() > 0 || _readyToExit;});
 
-		_cv.wait(guard, [&]() { return _taskJobs[threadNumber].size() > 0 || _readyToExit;});
+		return _readyToExit;
 	}
 
-	std::queue<TaskRef>&& GetPendingTasks(unsigned int threadNumber)
+	std::queue<TaskRef> GetOneTaskFromPending(unsigned int threadNumber)
 	{
-		std::unique_lock<std::mutex> lock(_mutex);
+		std::unique_lock<std::mutex> lock(_mutexJobs);
 
-		return move(_taskJobs[threadNumber]);
+		std::queue<TaskRef> tasks;
+		
+		if (_taskJobs[threadNumber].size() > 0)
+		{
+			tasks.emplace(_taskJobs[threadNumber].front());
+			_taskJobs[threadNumber].pop_front();
+		}
+
+		return move(tasks);
+	}
+
+	std::queue<TaskRef> GetAllPendingTasks(unsigned int threadNumber)
+	{
+		std::unique_lock<std::mutex> lock(_mutexJobs);
+
+		std::queue<TaskRef> tasks;
+		auto& taskJobs = _taskJobs[threadNumber];
+		for (auto it = taskJobs.begin(); it < taskJobs.end(); ++it)
+		{
+			tasks.emplace(std::move(*it));
+		}
+		taskJobs.clear();
+
+		return tasks;
 	}
 
 	void AddTaskJobs(std::vector<TaskId>&& taskIds, const std::map<TaskId, TaskRef>& tasks)
 	{
 		{
-			std::unique_lock<std::mutex> lock(_mutex);
+			std::unique_lock<std::mutex> lock(_mutexJobs);
 
 			for (const auto taskId:taskIds)
 			{
@@ -172,7 +203,7 @@ public:
 				//no affinity add to next thread
 				if (!task->second->GetAffinity().HasAffinity())
 				{
-					_taskJobs[_threadNumberToAddTask++].emplace(task->second);
+					_taskJobs[_threadNumberToAddTask++].emplace_back(task->second);
 				}
 				//get affinity of task
 				else
@@ -180,9 +211,8 @@ public:
 					unsigned int Affinity = task->second->GetAffinity().GetFirstAffinity();
 					Affinity = Affinity < _numThreads ? Affinity : _threadNumberToAddTask++;
 					
-					_taskJobs[Affinity].emplace(task->second);
+					_taskJobs[Affinity].emplace_back(task->second);
 				}
-								
 				
 				if (_threadNumberToAddTask >= _numThreads)
 				{
@@ -190,16 +220,16 @@ public:
 				}
 			}
 		}
-		_cv.notify_all();
+		_cvJobs.notify_all();
 	}
 
 	void SignalReadyToExit()
 	{
 		{
-			std::unique_lock<std::mutex> lock(_mutex);
+			std::unique_lock<std::mutex> lock(_mutexReadyTasks);
 			_readyToExit = true;
 		}
-		_cv.notify_all();		
+		_cvReadyTasks.notify_all();
 	}
 
 	void SignalTaskReady(TaskId taskId)
@@ -213,12 +243,68 @@ public:
 
 	void Clear()
 	{
-		std::lock(_mutex, _mutexReadyTasks);
-
-		const std::lock_guard<std::mutex> l1(_mutex, std::adopt_lock);
-		const std::lock_guard<std::mutex> l2(_mutexReadyTasks, std::adopt_lock);
+		//all threads are done no need of locks
+		while (!_threadsLookingForJob.empty())
+		{
+			_threadsLookingForJob.pop();
+		}
 
 		_readyTasks.clear();
 		_readyToExit = false;		
 	}
+
+	void LookForOtherJob(unsigned int threadNumber)
+	{
+		{
+			std::unique_lock<std::mutex> lock(_mutexReadyTasks);
+			_threadsLookingForJob.emplace(threadNumber);
+		}
+		_cvReadyTasks.notify_one();
+
+	}
+
+	void RescheduleTaskJobs()
+	{
+		if(!_threadsLookingForJob.empty())
+		{
+			{
+				//std::lock(_mutexJobs, _mutexReadyTasks);
+
+				//const std::lock_guard<std::mutex> l1(_mutexJobs, std::adopt_lock);
+				//const std::lock_guard<std::mutex> l2(_mutexReadyTasks);
+
+				while (!_threadsLookingForJob.empty())
+				{
+					auto lookingThreadId = _threadsLookingForJob.front();
+					_threadsLookingForJob.pop();
+
+					for (unsigned int threadId = 0; threadId < _taskJobs.size(); ++threadId)
+					{
+						if (threadId != lookingThreadId && _taskJobs[threadId].size() > 1)
+						{
+							std::cout << "\n\nThread:" << lookingThreadId << " steals from Thread:" << threadId << "\n\n";
+
+							//give thread some tasks ;) ( not matter the affinity)
+
+							auto&  tasksCollection = _taskJobs[threadId];
+
+							auto& recieverTasks = _taskJobs[lookingThreadId];
+							
+							//steal half of the tasks
+							auto itMiddle = std::next(tasksCollection.begin(), tasksCollection.size() / 2);
+
+							std::move(itMiddle, tasksCollection.end(), std::back_inserter(recieverTasks));
+							
+							tasksCollection.erase(itMiddle, tasksCollection.end());														
+
+							break;
+						}
+					}
+				}
+			}
+			_cvJobs.notify_all();
+		}
+	}
+
+
 };

@@ -28,10 +28,6 @@ public:
 		_controller.swap(other._controller);		
 	}
 
-	~WorkerThread()
-	{
-	}
-
 	void SetController(std::shared_ptr<TaskController>& controller)
 	{
 		_controller = controller;
@@ -49,27 +45,37 @@ private:
 		while (true)
 		{
 			//wait for more tasks or if done
-			_controller->WaitForTaskOrDone(_threadNumber);
-			auto&& taskJobs = _controller->GetPendingTasks(_threadNumber);
-			_tasks.swap(taskJobs);
-
-			if (_tasks.empty())			
+			bool readyToExit = _controller->WaitForTaskOrDone(_threadNumber);
+			if (readyToExit)
 			{
 				//we are done exit
 				break;
 			}
 
-			//process tasks
-			while (!_tasks.empty())
-			{	
-				//get next task
-				const TaskRef& task = _tasks.front();
-				_tasks.pop();
+			while (true)
+			{
+				_tasks.swap(_controller->GetOneTaskFromPending(_threadNumber));
+				if (_tasks.empty())
+				{
+					//signal we need more jobs
+					_controller->LookForOtherJob(_threadNumber);
+					//no tasks available wait for more
+					break;
+				}
 
-				task->Run();
+				//process tasks
+				while (!_tasks.empty())
+				{
+					//get next task
+					const TaskRef& task = _tasks.front();
+					_tasks.pop();
 
-				_controller->SignalTaskReady(task->GetTaskId());
+					task->Run();
+
+					_controller->SignalTaskReady(task->GetTaskId());
+				}
 			}
+	
 		}
 		
 	}
@@ -167,6 +173,7 @@ public:
 			else
 			{
 				WaitForReadyTasks();
+				_taskController->RescheduleTaskJobs();
 			}
 		}
 
