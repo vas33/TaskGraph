@@ -9,7 +9,7 @@
 #include "src/task_graph_utils.h"
 
 #include "ext/ch1.h"
-
+#include "ext/ch2.h"
 
 using namespace std;
 
@@ -202,7 +202,7 @@ void Test3()
 		(
 			[&image]()->int
 			{
-				image = ch01::makeFractalImage(20000);
+				image = ch01::makeFractalImage(2000000);
 				//save original image image
 				image->write("./fractal0.png");
 				return 0;
@@ -260,13 +260,95 @@ void Test4()
 	cout << "Test4 4 Done \n";
 }
 
+void Test5()
+{
+	cout <<"\nTest 5 Start \n";
+
+	using Image = PNGImage;
+	using ImagePair = std::pair<PNGImage, PNGImage>;
+
+	PNGImage leftImage;
+	PNGImage rightImage;
+
+	TaskRef getLeftImageTask = std::make_shared<InitialTaskNode<int>>
+	(
+			[&leftImage]()->int
+			{
+				leftImage = getLeftImage(0);
+				std::cout << "Done loading left image \n";
+				return 0;
+			}
+	);
+
+	TaskRef getRightImageTask = std::make_shared<InitialTaskNode<int>>
+		(
+		[&leftImage, &rightImage]()->int
+		{
+			rightImage = getRightImage(0);
+			std::cout << "Done loading right image \n";
+			return 0;
+		}
+	);
+
+	TaskRef increasePngChannelLeftTask = std::make_shared<InitialTaskNode<int>>
+		(
+			[ &leftImage]()->int
+			{
+				increasePNGChannel(leftImage, Image::redOffset, 10);
+				std::cout << "Done increase PNG channel left \n";
+				return 0;
+			}
+	);
+	TaskRef increasePngChannelRightTask = std::make_shared<InitialTaskNode<int>>
+		(
+			[&rightImage]() -> int {
+				increasePNGChannel(rightImage, Image::blueOffset, 10);
+				std::cout << "Done increase PNG channel right \n";
+				return 0;
+			}
+	);
+	TaskRef mergeImages = std::make_shared<MultiJoinTaskNode<int>>
+		(
+			[&leftImage, &rightImage]() -> int {
+				mergePNGImages(leftImage, rightImage);
+				std::cout << "Done merging images\n";
+				return 0;
+				},
+				std::vector<TaskRef>{ increasePngChannelLeftTask, increasePngChannelRightTask }
+		);
+	TaskRef writeResult = std::make_shared<InitialTaskNode<int>>
+		(
+			[&leftImage]() -> int {
+				leftImage.write();
+				std::cout <<"Done writing image Out0.png \n";
+				return 0;
+				}
+	);
+
+	TaskGraph graph;
+
+	graph.AddTask(getLeftImageTask);
+	graph.AddTask(getRightImageTask);
+
+	graph.AddTaskEdge(getRightImageTask, increasePngChannelLeftTask);
+	graph.AddTaskEdge(getRightImageTask, increasePngChannelRightTask);
+
+	graph.AddTaskEdges({ increasePngChannelLeftTask, increasePngChannelRightTask }, mergeImages);
+	graph.AddTaskEdge(mergeImages, writeResult);
+
+	graph.WaitAll();
+	
+	cout <<"\nTest 5 Done \n";
+}
+
+
 int main()
 {
 	Test1();
 	Test2();
 	Test3();
 	Test4();
-
+	Test5();
 
 	cout << "\nType a word and pres [Enter] to exit\n";
 	char z;
