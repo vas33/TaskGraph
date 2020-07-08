@@ -15,28 +15,26 @@ using namespace std;
 
 void Test1()
 {	
-	cout << "\n Test 1 start \n";
+	std::cout << "\n Test 1 start \n";
 	TaskGraph graph;
 
 	int result = 0;
 
 	//Spawn th 1
-	auto prduceSomeInt = make_shared<InitialTaskNode<int>>(
-		[]()->int
+	
+	std::shared_ptr<TaskBase> prduceSomeInt = make_shared<InitialTaskNode<int>>([]()->int
 	{
 		return 1000;
-	}
-	);
+	});
 
 	//Spawn th 2
-	std::shared_ptr<TaskNode<int, int>> task2 = make_shared<TaskNode<int, int>>(
+	std::shared_ptr<TaskNode<int, int>> doComplexCalculations = make_shared<TaskNode<int, int>>(
 		prduceSomeInt,
 		[&](int input) ->int
 	{
 
 			TaskGraph subGraph(1);
 			////add dynamic task
-			////Spawn th 3
 			auto  node = make_shared<InitialTaskNode<int>>(
 				[]()->int
 			{
@@ -56,22 +54,21 @@ void Test1()
 			subGraph.AddTaskEdge(node, nodePlusOne);
 			subGraph.WaitAll();
 
-			int z = 1000;
 		
-			return input * 40 * z + nodePlusOne->GetResult();
+			return input * 40 * 1000 + nodePlusOne->GetResult();
 	}
 	);
 
 	prduceSomeInt->SetAffinity({ 2 });
 	graph.AddTask(prduceSomeInt);
-	graph.AddTaskEdge(prduceSomeInt, task2);
-	
+	graph.AddTaskEdge(prduceSomeInt, doComplexCalculations);
+
 	graph.WaitAll();
 
-	assert(task2->GetResult() == 40000501);
-	cout << "result " << task2->GetResult() << " \n";
+	assert(doComplexCalculations->GetResult() == 40000501);
+	std::cout << "result " << doComplexCalculations->GetResult() << " \n";
 
-	cout << "\n Test 1 done \n";
+	std::cout << "\n Test 1 done \n";
 }
 
 void Test2()
@@ -270,71 +267,54 @@ void Test5()
 	PNGImage leftImage;
 	PNGImage rightImage;
 
-	TaskRef getLeftImageTask = std::make_shared<InitialTaskNode<int>>
-	(
-			[&leftImage]()->int
-			{
-				leftImage = getLeftImage(0);
-				std::cout << "Done loading left image \n";
-				return 0;
-			}
-	);
+	TaskGraph graph(2);
+	
+	auto increaseLeftPNGChannel = AddTaskSequence<void>(graph,
+		[&leftImage]()
+		{
+			leftImage = getLeftImage(0);
 
-	TaskRef getRightImageTask = std::make_shared<InitialTaskNode<int>>
-		(
-		[&leftImage, &rightImage]()->int
+			std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+			std::cout << "Done loading left image \n";
+		},
+		[&leftImage]()->int
+		{
+			increasePNGChannel(leftImage, Image::redOffset, 10);
+			std::cout << "Done increase PNG channel left \n";
+			return 0;
+		});
+
+	auto increaseRightPNGChannel = AddTaskSequence<void>(graph,
+		[&rightImage]()
 		{
 			rightImage = getRightImage(0);
-			std::cout << "Done loading right image \n";
-			return 0;
-		}
-	);
+			std::cout << "Done loading right image \n";			
+		},
+		[&rightImage](){
+			increasePNGChannel(rightImage, Image::blueOffset, 10);
+			std::cout << "Done increase PNG channel right \n";			
+		});
 
-	TaskRef increasePngChannelLeftTask = std::make_shared<InitialTaskNode<int>>
+	TaskRef mergeImages = std::make_shared<MultiJoinTaskNode<void>>
 		(
-			[ &leftImage]()->int
-			{
-				increasePNGChannel(leftImage, Image::redOffset, 10);
-				std::cout << "Done increase PNG channel left \n";
-				return 0;
-			}
+			[&leftImage, &rightImage](){
+			mergePNGImages(leftImage, rightImage);
+			std::cout << "Done merging images\n";
+
+		},
+			std::vector<TaskRef>{ increaseLeftPNGChannel, increaseRightPNGChannel }
 	);
-	TaskRef increasePngChannelRightTask = std::make_shared<InitialTaskNode<int>>
+	TaskRef writeResult = std::make_shared<InitialTaskNode<void>>
 		(
-			[&rightImage]() -> int {
-				increasePNGChannel(rightImage, Image::blueOffset, 10);
-				std::cout << "Done increase PNG channel right \n";
-				return 0;
-			}
-	);
-	TaskRef mergeImages = std::make_shared<MultiJoinTaskNode<int>>
-		(
-			[&leftImage, &rightImage]() -> int {
-				mergePNGImages(leftImage, rightImage);
-				std::cout << "Done merging images\n";
-				return 0;
-				},
-				std::vector<TaskRef>{ increasePngChannelLeftTask, increasePngChannelRightTask }
-		);
-	TaskRef writeResult = std::make_shared<InitialTaskNode<int>>
-		(
-			[&leftImage]() -> int {
+			[&leftImage]() -> void {
 				leftImage.write();
-				std::cout <<"Done writing image Out0.png \n";
-				return 0;
-				}
+				std::cout << "Done writing image Out0.png \n";
+			}
 	);
 
-	TaskGraph graph;
-
-	graph.AddTask(getLeftImageTask);
-	graph.AddTask(getRightImageTask);
-
-	graph.AddTaskEdge(getRightImageTask, increasePngChannelLeftTask);
-	graph.AddTaskEdge(getRightImageTask, increasePngChannelRightTask);
-
-	graph.AddTaskEdges({ increasePngChannelLeftTask, increasePngChannelRightTask }, mergeImages);
-	graph.AddTaskEdge(mergeImages, writeResult);
+	auto write2 = move(writeResult);
+	graph.AddTaskEdges({ increaseLeftPNGChannel, increaseRightPNGChannel }, mergeImages);
+	graph.AddTaskEdge(mergeImages, write2);
 
 	graph.WaitAll();
 	

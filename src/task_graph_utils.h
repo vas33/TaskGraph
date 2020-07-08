@@ -3,7 +3,7 @@
 #include "task_items.h"
 
 template <typename OutputType, typename FirstCallable, typename  ... Callables>
-void AddTaskSequence(TaskGraph& graph, FirstCallable&& firstCallable,  Callables&& ... callables)
+TaskRef AddTaskSequence(TaskGraph& graph, FirstCallable&& firstCallable,  Callables&& ... callables)
 {
 	auto task = std::make_shared<InitialTaskNode<OutputType>>
 		(
@@ -11,11 +11,11 @@ void AddTaskSequence(TaskGraph& graph, FirstCallable&& firstCallable,  Callables
 		);
 
 	graph.AddTask(task);
-	AddSubtaskSequence<OutputType>(graph, task, callables...);
+	return AddSubtaskSequence<OutputType>(graph, task, callables...);
 }
 
 template <typename OutputType, typename ParentTask, typename FirstCallable, typename ... Callable>
-void AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, FirstCallable&& firstCallable, Callable&& ...  callables)
+TaskRef AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, FirstCallable&& firstCallable, Callable&& ...  callables)
 {
 	auto childTask = std::make_shared<InitialTaskNode<OutputType>>
 		(
@@ -24,11 +24,11 @@ void AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, FirstCallable
 
 	graph.AddTaskEdge(std::forward<ParentTask>(parentTask), childTask);
 
-	AddSubtaskSequence<OutputType>(graph, childTask, callables ...);
+	return AddSubtaskSequence<OutputType>(graph, childTask, callables ...);
 }
 
 template <typename OutputType, typename ParentTask,  typename  Callable>
-void AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, Callable&&  callable)
+TaskRef AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, Callable&&  callable)
 {
 	auto childTask = std::make_shared<InitialTaskNode<OutputType>>
 		(
@@ -36,6 +36,8 @@ void AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, Callable&&  c
 		);
 
 	graph.AddTaskEdge(std::forward<ParentTask>(parentTask), childTask);
+
+	return childTask;
 }
 
 template <typename OutputType, typename CallableType>

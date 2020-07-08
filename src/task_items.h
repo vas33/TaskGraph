@@ -9,21 +9,23 @@ class TaskNode : public TaskBase, public TaskResult<OutputType>
 	TaskCallable _callable;
 	OutputType _result;
 
-public:
+
+public:	
 	explicit TaskNode(std::shared_ptr<TaskBase> prev, TaskCallable callable) :
 		_prev(prev),
 		_callable(callable)
 	{
 	}
-
 	TaskNode(const TaskNode&) = delete;
 	TaskNode& operator = (const TaskNode&) = delete;
 
 	void ExecuteInt() override
 	{
 		auto resultGetter = std::dynamic_pointer_cast<TaskResult<InputType>>(_prev);
-
-		_result = _callable(resultGetter->GetResult());
+		if (resultGetter)
+		{
+			_result = _callable(resultGetter->GetResult());
+		}	
 	}
 
 	OutputType GetResult() override
@@ -55,6 +57,23 @@ public:
 	}
 };
 
+template<>
+class InitialTaskNode<void> :public TaskBase
+{
+	using TaskCallable = std::function<void()>;
+	TaskCallable _callable;
+public:
+
+	explicit InitialTaskNode(TaskCallable callable) :_callable(callable)
+	{
+	}
+
+	void ExecuteInt() override
+	{
+		_callable();
+	}
+};
+
 template<typename OutputType>
 class ParallelTaskNode : public TaskBase, public TaskResult<OutputType>
 {
@@ -62,7 +81,7 @@ class ParallelTaskNode : public TaskBase, public TaskResult<OutputType>
 	unsigned int _chunk;
 	TaskCallable _callable;
 	OutputType _result;
-
+	
 public:
 	explicit ParallelTaskNode(unsigned int chunk, TaskCallable callable) :
 		_chunk(chunk), _callable(callable)
@@ -110,5 +129,33 @@ public:
 	void ExecuteInt() override
 	{
 		_result = _callable();
+	}
+};
+
+template<>
+class MultiJoinTaskNode<void> :public TaskBase
+{
+	using TaskCallable = std::function<void()>;
+	TaskCallable _callable;	
+	mutable std::set<TaskId> _prevTaskIds;
+public:
+	explicit MultiJoinTaskNode(TaskCallable callable, const std::vector<TaskRef>& prevTasks) : _callable(callable)
+	{
+		for (const auto& task : prevTasks)
+		{
+			_prevTaskIds.emplace(task->GetTaskId());
+		}
+	}
+
+	bool CanRun(TaskId prevtaskId) const override
+	{
+		//make sure all previous tasks are executed before fetching this one
+		_prevTaskIds.erase(prevtaskId);
+		return _prevTaskIds.size() == 0;
+	}
+
+	void ExecuteInt() override
+	{
+		_callable();
 	}
 };

@@ -91,6 +91,11 @@ protected:
 	virtual void ExecuteInt() = 0;
 
 public:
+
+	TaskBase() = default;
+
+	virtual ~TaskBase() = default;
+	
 	TaskId GetTaskId() const
 	{
 		return _taskId;

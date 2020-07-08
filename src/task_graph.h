@@ -212,6 +212,12 @@ private:
 	//add to global tasks collection
 	void AddToTasks(TaskRef& task)
 	{
+		if (_tasks.find(task->GetTaskId()) != _tasks.end())
+		{
+			throw std::invalid_argument("Error attempting to add duplicate task");
+		}
+
+
 		_tasks.emplace(task->GetTaskId(), task);
 	}
 	
