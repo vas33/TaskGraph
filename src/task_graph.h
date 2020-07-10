@@ -173,7 +173,7 @@ public:
 			else
 			{
 				WaitForReadyTasks();
-				_taskController->RescheduleTaskJobs();
+				RescheduleTaskJobs();
 			}
 		}
 
@@ -194,7 +194,7 @@ private:
 	{		
 		_workerThreads.clear();
 
-		for (int threadIndex = 0; threadIndex < _maxRunningTasks; ++threadIndex)
+		for (unsigned threadIndex = 0; threadIndex < _maxRunningTasks; ++threadIndex)
 		{				
 			WorkerThread wth(threadIndex);
 			wth.SetController(_taskController);
@@ -216,7 +216,6 @@ private:
 		{
 			throw std::invalid_argument("Error attempting to add duplicate task");
 		}
-
 
 		_tasks.emplace(task->GetTaskId(), task);
 	}
@@ -277,5 +276,10 @@ private:
 		_taskController->AddTaskJobs(move(_pendingTasks), _tasks);
 
 		_pendingTasks.clear();
+	}
+
+	void RescheduleTaskJobs()
+	{
+		_taskController->RescheduleTaskJobs();
 	}
 };

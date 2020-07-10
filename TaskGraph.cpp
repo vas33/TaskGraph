@@ -1,7 +1,6 @@
 // TaskGraph.cpp : Defines the entry point for the console application.
 //
 #include <assert.h>
-
 #include <iostream>
 #include <map>
 
@@ -88,7 +87,7 @@ void Test2()
 			}
 			return 0;
 		},
-		{ 1 , 2 , 3 ,4 ,5}		
+		{ 0, 1 , 2 , 3 ,4}		
 	);
 
 	//graph.PrintTasksExecution();
@@ -273,8 +272,6 @@ void Test5()
 		[&leftImage]()
 		{
 			leftImage = getLeftImage(0);
-
-			std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 			std::cout << "Done loading left image \n";
 		},
 		[&leftImage]()->int
@@ -312,9 +309,8 @@ void Test5()
 			}
 	);
 
-	auto write2 = move(writeResult);
 	graph.AddTaskEdges({ increaseLeftPNGChannel, increaseRightPNGChannel }, mergeImages);
-	graph.AddTaskEdge(mergeImages, write2);
+	graph.AddTaskEdge(mergeImages, writeResult);
 
 	graph.WaitAll();
 	

@@ -69,7 +69,7 @@ void ParallelFor(TaskGraph& graph, unsigned int chunksCount, CallableType&& call
 }
 
 template <typename OutputType, int numThreads = 5, typename CallableType>
-void ParallelFor(unsigned int chunksCount, CallableType&& callable, TaskAffinity affinity = {})
+void ParallelFor(unsigned int chunksCount, CallableType&& callable, TaskAffinity&& affinity = {})
 {
 	TaskGraph graph(numThreads);
 

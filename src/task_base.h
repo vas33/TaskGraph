@@ -21,20 +21,22 @@ struct TaskResult
 	virtual OutputType GetResult() = 0;
 };
 
-//TODO make itearator for TaskAffinity
+
 class TaskAffinity
 {
-	std::bitset<24> _affinityBits;
-
-public:
-	TaskAffinity()
-	{}
+	std::bitset<32> _affinityBits;
 	
-	TaskAffinity(std::initializer_list<unsigned int> affinities)
-	{		
-		SetAffinity(affinities);
+public:
+
+	template<typename ... T>
+	constexpr TaskAffinity(T ...t)
+	{
+		_affinityBits = GetRawAffinity(t ...);
 	}
 
+	constexpr TaskAffinity()
+	{}
+	
 	unsigned int GetFirstAffinity() const
 	{
 		unsigned int bitNumber = 0;
@@ -75,6 +77,29 @@ public:
 			}
 		}
 	}	
+private:
+	//looks nice but not safe
+	//TODO check value in range
+	template <typename T, typename ...Tn>
+	static constexpr unsigned int GetRawAffinity(T first, Tn ... rest)
+	{
+		static_assert(std::is_integral<T>::value, "Integral type required");
+		return  (1 << (first)) | GetRawAffinity(rest ...);
+	}
+
+	template <typename T>
+	static constexpr unsigned intGetRawAffinity(T first, T second)
+	{
+		static_assert(std::is_integral<T>::value, "Integral type required");
+		return  1 << (first) | 1 << (second);
+	}
+
+	template <typename T>
+	static constexpr unsigned int GetRawAffinity(T first)
+	{
+		static_assert(std::is_integral<T>::value, "Integral type required");
+		return  1 << (first);
+	}
 };
 
 class TaskBase
@@ -83,7 +108,7 @@ protected:
 	TaskAffinity _affinity;
 	TaskId GetNextTaskId() const
 	{
-		static unsigned int id = 1;
+		static std::atomic<unsigned int> id = 1;
 		return id++;
 	}
 	TaskId _taskId = GetNextTaskId();
@@ -135,7 +160,7 @@ class TaskController
 	std::mutex _mutexJobs;
 
 	std::vector<TaskId> _readyTasks;
-	bool _readyToExit{ false };
+	std::atomic<bool> _readyToExit{ false };
 		
 	std::map<unsigned int, std::deque<TaskRef>> _taskJobs;
 	std::queue<unsigned int> _threadsLookingForJob;
@@ -231,7 +256,6 @@ public:
 	void SignalReadyToExit()
 	{
 		{
-			std::unique_lock<std::mutex> lock(_mutexReadyTasks);
 			_readyToExit = true;
 		}
 		_cvReadyTasks.notify_all();
@@ -273,10 +297,10 @@ public:
 		if(!_threadsLookingForJob.empty())
 		{
 			{
-				//std::lock(_mutexJobs, _mutexReadyTasks);
+				std::lock(_mutexJobs, _mutexReadyTasks);
 
-				//const std::lock_guard<std::mutex> l1(_mutexJobs, std::adopt_lock);
-				//const std::lock_guard<std::mutex> l2(_mutexReadyTasks);
+				const std::lock_guard<std::mutex> l1(_mutexJobs, std::adopt_lock);
+				const std::lock_guard<std::mutex> l2(_mutexReadyTasks, std::adopt_lock);
 
 				while (!_threadsLookingForJob.empty())
 				{
