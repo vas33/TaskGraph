@@ -21,14 +21,14 @@ void Test1()
 
 	//Spawn th 1
 	
-	std::shared_ptr<TaskBase> prduceSomeInt = make_shared<InitialTaskNode<int>>([]()->int
+	std::shared_ptr<TaskBase> produceSomeInt = make_shared<InitialTaskNode<int>>([]()->int
 	{
 		return 1000;
 	});
 
 	//Spawn th 2
 	std::shared_ptr<TaskNode<int, int>> doComplexCalculations = make_shared<TaskNode<int, int>>(
-		prduceSomeInt,
+		produceSomeInt,
 		[&](int input) ->int
 	{
 
@@ -58,9 +58,9 @@ void Test1()
 	}
 	);
 
-	prduceSomeInt->SetAffinity({ 2 });
-	graph.AddTask(prduceSomeInt);
-	graph.AddTaskEdge(prduceSomeInt, doComplexCalculations);
+	produceSomeInt->SetAffinity({ 2 });
+	graph.AddTask(produceSomeInt);
+	graph.AddTaskEdge(produceSomeInt, doComplexCalculations);
 
 	graph.WaitAll();
 
@@ -325,6 +325,7 @@ int main()
 	Test3();
 	Test4();
 	Test5();
+
 
 	cout << "\nType a word and pres [Enter] to exit\n";
 	char z;

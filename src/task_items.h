@@ -28,7 +28,7 @@ public:
 		}	
 	}
 
-	OutputType GetResult() override
+	OutputType GetResult() const override
 	{
 		return _result;
 	}
@@ -38,22 +38,25 @@ template<typename OutputType>
 class InitialTaskNode :public TaskBase, public TaskResult<OutputType>
 {
 	using TaskCallable = std::function<OutputType()>;
-	TaskCallable _callable;
 	OutputType _result;
+	std::packaged_task<OutputType()> _caller;
+	mutable std::future<OutputType> _future;
 public:
 
-	explicit InitialTaskNode(TaskCallable callable) :_callable(callable)
+	explicit InitialTaskNode(TaskCallable&& callable):
+		_caller(std::forward<TaskCallable>(callable)),
+		_future(_caller.get_future())
 	{
 	}
 
-	OutputType GetResult()
-	{
-		return _result;
+	OutputType GetResult() const
+	{		
+		return _future.get();
 	}
 
 	void ExecuteInt() override
 	{
-		_result = _callable();
+		_caller();
 	}
 };
 
@@ -80,7 +83,7 @@ class ParallelTaskNode : public TaskBase, public TaskResult<OutputType>
 	using TaskCallable = std::function<OutputType(unsigned int)>;
 	unsigned int _chunk;
 	TaskCallable _callable;
-	OutputType _result;
+	mutable OutputType _result;
 	
 public:
 	explicit ParallelTaskNode(unsigned int chunk, TaskCallable callable) :
@@ -88,7 +91,7 @@ public:
 	{
 	}
 
-	OutputType GetResult() override
+	OutputType GetResult() const override
 	{
 		return _result;
 	}
@@ -114,7 +117,7 @@ public:
 		}
 	}
 
-	OutputType GetResult() override
+	OutputType GetResult() const override
 	{
 		return _result;
 	}

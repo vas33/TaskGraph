@@ -8,17 +8,19 @@
 #include <queue>
 #include <chrono>       
 #include <ctime>
+#include <set>
 
 using TaskId = unsigned int;
 class TaskBase;
 using TaskRef = std::shared_ptr<TaskBase>;
 class TaskController;
 using TaskControllerRef = std::shared_ptr<TaskController>;
+using TasksCollection = std::map<TaskId,const TaskRef>;
 
 template <typename OutputType>
 struct TaskResult
 {
-	virtual OutputType GetResult() = 0;
+	virtual OutputType GetResult() const = 0;
 };
 
 
@@ -162,13 +164,16 @@ class TaskController
 	std::vector<TaskId> _readyTasks;
 	std::atomic<bool> _readyToExit{ false };
 		
-	std::map<unsigned int, std::deque<TaskRef>> _taskJobs;
+	std::vector<std::deque<TaskId>> _taskJobs;	
 	std::queue<unsigned int> _threadsLookingForJob;
 
 public:
-	explicit TaskController(unsigned int NumThreads):_numThreads(NumThreads)
+	explicit TaskController(unsigned int NumThreads):
+		_numThreads(NumThreads)
 	{
+		_taskJobs.resize(NumThreads);
 	}
+
 	std::vector<TaskId> WaitTillReadyTask()
 	{
 		std::unique_lock<std::mutex> guard(_mutexReadyTasks);
@@ -191,26 +196,28 @@ public:
 		return _readyToExit;
 	}
 
-	std::queue<TaskRef> GetOneTaskFromPending(unsigned int threadNumber)
+	std::queue<TaskId> GetOneTaskFromPending(unsigned int threadNumber)
 	{
-		std::unique_lock<std::mutex> lock(_mutexJobs);
-
-		std::queue<TaskRef> tasks;
+		std::queue<TaskId> tasks;
 		
-		if (_taskJobs[threadNumber].size() > 0)
 		{
-			tasks.emplace(_taskJobs[threadNumber].front());
-			_taskJobs[threadNumber].pop_front();
+			std::unique_lock<std::mutex> lock(_mutexJobs);
+			if (_taskJobs[threadNumber].size() > 0)
+			{
+				tasks.emplace(_taskJobs[threadNumber].front());
+				_taskJobs[threadNumber].pop_front();
+			}
 		}
+		
 
 		return move(tasks);
 	}
 
-	std::queue<TaskRef> GetAllPendingTasks(unsigned int threadNumber)
+	std::queue<TaskId> GetAllPendingTasks(unsigned int threadNumber)
 	{
 		std::unique_lock<std::mutex> lock(_mutexJobs);
 
-		std::queue<TaskRef> tasks;
+		std::queue<TaskId> tasks;
 		auto& taskJobs = _taskJobs[threadNumber];
 		for (auto it = taskJobs.begin(); it < taskJobs.end(); ++it)
 		{
@@ -221,7 +228,7 @@ public:
 		return tasks;
 	}
 
-	void AddTaskJobs(std::vector<TaskId>&& taskIds, const std::map<TaskId, TaskRef>& tasks)
+	void AddTaskJobs(std::vector<TaskId>&& taskIds, const TasksCollection& tasks)
 	{
 		{
 			std::unique_lock<std::mutex> lock(_mutexJobs);
@@ -233,7 +240,7 @@ public:
 				//no affinity add to next thread
 				if (!task->second->GetAffinity().HasAffinity())
 				{
-					_taskJobs[_threadNumberToAddTask++].emplace_back(task->second);
+					_taskJobs[_threadNumberToAddTask++].emplace_back(taskId);
 				}
 				//get affinity of task
 				else
@@ -241,7 +248,7 @@ public:
 					unsigned int Affinity = task->second->GetAffinity().GetFirstAffinity();
 					Affinity = Affinity < _numThreads ? Affinity : _threadNumberToAddTask++;
 					
-					_taskJobs[Affinity].emplace_back(task->second);
+					_taskJobs[Affinity].emplace_back(taskId);
 				}
 				
 				if (_threadNumberToAddTask >= _numThreads)

@@ -7,10 +7,13 @@
 class WorkerThread
 {
 	std::shared_ptr<TaskController> _controller;
-	std::queue<TaskRef>  _tasks{};
+	std::queue<TaskId>  _tasks{};
 	unsigned int _threadNumber{ 0 };
+	const TasksCollection& _tasksData;
 public:
-	explicit WorkerThread(unsigned int threadNumber) :_threadNumber(threadNumber)
+	explicit WorkerThread(TasksCollection& tasksData, unsigned int threadNumber) :
+		_threadNumber(threadNumber),
+		_tasksData(tasksData)
 	{
 	}
 
@@ -21,7 +24,8 @@ public:
 	WorkerThread&  operator=(WorkerThread&& other) = delete;
 
 	WorkerThread(WorkerThread&& other):
-		_threadNumber(other._threadNumber)
+		_threadNumber(other._threadNumber),
+		_tasksData(other._tasksData)
 	{		
 		_tasks.swap(other._tasks);
 		
@@ -36,6 +40,7 @@ public:
 	void Start()
 	{
 		std::thread th(&WorkerThread::DoJobs, this);
+		//Some OS specific code here that sets thread to concrete CPU
 		th.detach();
 	}
 
@@ -67,12 +72,16 @@ private:
 				while (!_tasks.empty())
 				{
 					//get next task
-					const TaskRef& task = _tasks.front();
+					TaskId taskId = _tasks.front();
 					_tasks.pop();
 
-					task->Run();
-
-					_controller->SignalTaskReady(task->GetTaskId());
+					auto it = _tasksData.find(taskId);
+					if (it != _tasksData.end())
+					{
+						it->second->Run();
+					}
+								
+					_controller->SignalTaskReady(taskId);
 				}
 			}
 	
@@ -93,7 +102,7 @@ class TaskGraph
 	std::shared_ptr<TaskController> _taskController;
 	unsigned int _maxRunningTasks{ 1 };
 
-	std::map<TaskId, TaskRef> _tasks;
+	TasksCollection _tasks;
 	std::vector<TaskId> _pendingTasks;
 	std::vector<TaskId> _completedTasks;
 	std::map<TaskId, std::vector<TaskId>> _taskChildren;
@@ -181,13 +190,24 @@ public:
 		DoneAndExit();
 	}
 private:
+	void CleanUp()
+	{
+		_taskController->Clear();
+
+		_tasks.clear();
+		_pendingTasks.clear();
+		_completedTasks.clear();
+		_taskChildren.clear();
+		_workerThreads.clear();
+	}
+
 	void DoneAndExit()
 	{
 		_taskController->SignalReadyToExit();
 		//wait some time for worker threads to exit
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-		_taskController->Clear();
+		CleanUp();		
 	}
 
 	void StartWorkerThreads()
@@ -196,7 +216,7 @@ private:
 
 		for (unsigned threadIndex = 0; threadIndex < _maxRunningTasks; ++threadIndex)
 		{				
-			WorkerThread wth(threadIndex);
+			WorkerThread wth(_tasks, threadIndex);
 			wth.SetController(_taskController);
 
 			_workerThreads.push_back(std::move(wth));
