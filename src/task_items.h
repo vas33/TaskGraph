@@ -1,21 +1,48 @@
 #pragma once
 
-template<typename InputType, typename OutputType>
-class TaskNode : public TaskBase, public TaskResult<OutputType>
+template<typename T, typename  ...Args>
+struct shared_enabler : public T
 {
+	shared_enabler(Args&&...  args) :T(std::forward<Args>(args)...) {};
+};
+
+template<typename T, typename  ...Args>
+auto make_shared_enabler(Args... args)
+{
+	return std::make_shared<shared_enabler<T, Args...>>(std::forward<Args>(args)...);
+}
+
+template<typename TaskType>
+struct TaskFactory
+{
+	template<typename ...Args>
+	static const std::shared_ptr<TaskType> create(Args&& ... args)
+	{
+		return make_shared_enabler<TaskType>(std::forward<Args>(args)...);
+	}
+};
+
+template<typename InputType, typename OutputType>
+class TaskNode : 
+	public TaskBase,
+	public TaskResult<OutputType>,
+	public TaskFactory<TaskNode<InputType, OutputType>>
+{
+	template<typename T, typename ...Args>
+	friend struct shared_enabler;
+
 	using TaskCallable = std::function<OutputType(InputType)>;
 
 	std::shared_ptr<TaskBase> _prev;
 	TaskCallable _callable;
 	OutputType _result;
 
-
-public:	
 	explicit TaskNode(std::shared_ptr<TaskBase> prev, TaskCallable callable) :
 		_prev(prev),
 		_callable(callable)
 	{
 	}
+public:		
 	TaskNode(const TaskNode&) = delete;
 	TaskNode& operator = (const TaskNode&) = delete;
 
@@ -35,20 +62,27 @@ public:
 };
 
 template<typename OutputType>
-class InitialTaskNode :public TaskBase, public TaskResult<OutputType>
+class InitialTaskNode :
+	public TaskBase, 
+	public TaskResult<OutputType>,
+	public TaskFactory<InitialTaskNode<OutputType>>
 {
 	using TaskCallable = std::function<OutputType()>;
+	
+	template<typename T, typename ...Args>
+	friend struct shared_enabler;
+	
 	OutputType _result;
 	std::packaged_task<OutputType()> _caller;
 	mutable std::future<OutputType> _future;
-public:
 
-	explicit InitialTaskNode(TaskCallable&& callable):
+	explicit InitialTaskNode(TaskCallable&& callable) :
 		_caller(std::forward<TaskCallable>(callable)),
 		_future(_caller.get_future())
 	{
 	}
-
+public:
+	
 	OutputType GetResult() const
 	{		
 		return _future.get();
@@ -58,19 +92,26 @@ public:
 	{
 		_caller();
 	}
+private:
+
 };
 
 template<>
-class InitialTaskNode<void> :public TaskBase
+class InitialTaskNode<void> :
+	public TaskBase,
+	public TaskFactory<InitialTaskNode<void>>
 {
 	using TaskCallable = std::function<void()>;
-	TaskCallable _callable;
-public:
+	
+	template<typename T, typename ...Args>
+	friend struct shared_enabler;
 
+	TaskCallable _callable;
+	
 	explicit InitialTaskNode(TaskCallable callable) :_callable(callable)
 	{
 	}
-
+public:	
 	void ExecuteInt() override
 	{
 		_callable();
@@ -78,18 +119,25 @@ public:
 };
 
 template<typename OutputType>
-class ParallelTaskNode : public TaskBase, public TaskResult<OutputType>
+class ParallelTaskNode : 
+	public TaskBase,
+	public TaskResult<OutputType>,
+	public TaskFactory<ParallelTaskNode<OutputType>>
 {
 	using TaskCallable = std::function<OutputType(unsigned int)>;
+
+	template<typename T, typename ...Args>
+	friend struct shared_enabler;
+
 	unsigned int _chunk;
 	TaskCallable _callable;
 	mutable OutputType _result;
 	
-public:
 	explicit ParallelTaskNode(unsigned int chunk, TaskCallable callable) :
 		_chunk(chunk), _callable(callable)
 	{
 	}
+public:
 
 	OutputType GetResult() const override
 	{
@@ -102,13 +150,18 @@ public:
 };
 
 template<typename OutputType>
-class MultiJoinTaskNode :public TaskBase, public TaskResult<OutputType>
+class MultiJoinTaskNode :
+	public TaskBase, 
+	public TaskResult<OutputType>,
+	public TaskFactory<MultiJoinTaskNode<OutputType>>
 {
+	template<typename T, typename ...Args>
+	friend struct shared_enabler;
+
 	using TaskCallable = std::function<OutputType()>;
 	TaskCallable _callable;
 	OutputType _result;
 	mutable std::set<TaskId> _prevTaskIds;
-public:
 	explicit MultiJoinTaskNode(TaskCallable callable, const std::vector<TaskRef>& prevTasks) : _callable(callable)
 	{
 		for (const auto& task : prevTasks)
@@ -117,6 +170,7 @@ public:
 		}
 	}
 
+public:
 	OutputType GetResult() const override
 	{
 		return _result;
@@ -136,12 +190,17 @@ public:
 };
 
 template<>
-class MultiJoinTaskNode<void> :public TaskBase
+class MultiJoinTaskNode<void> :
+	public TaskBase,
+	public TaskFactory<MultiJoinTaskNode<void>>
 {
 	using TaskCallable = std::function<void()>;
+	template<typename T, typename ...Args>
+	friend struct shared_enabler;
+
+
 	TaskCallable _callable;	
 	mutable std::set<TaskId> _prevTaskIds;
-public:
 	explicit MultiJoinTaskNode(TaskCallable callable, const std::vector<TaskRef>& prevTasks) : _callable(callable)
 	{
 		for (const auto& task : prevTasks)
@@ -149,7 +208,8 @@ public:
 			_prevTaskIds.emplace(task->GetTaskId());
 		}
 	}
-
+public:
+	
 	bool CanRun(TaskId prevtaskId) const override
 	{
 		//make sure all previous tasks are executed before fetching this one

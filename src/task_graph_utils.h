@@ -2,22 +2,10 @@
 #include "task_graph.h"
 #include "task_items.h"
 
-template <typename OutputType, typename FirstCallable, typename  ... Callables>
-TaskRef AddTaskSequence(TaskGraph& graph, FirstCallable&& firstCallable,  Callables&& ... callables)
-{
-	auto task = std::make_shared<InitialTaskNode<OutputType>>
-		(
-			std::forward<FirstCallable>(firstCallable)
-		);
-
-	graph.AddTask(task);
-	return AddSubtaskSequence<OutputType>(graph, task, callables...);
-}
-
 template <typename OutputType, typename ParentTask, typename FirstCallable, typename ... Callable>
 TaskRef AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, FirstCallable&& firstCallable, Callable&& ...  callables)
 {
-	auto childTask = std::make_shared<InitialTaskNode<OutputType>>
+	auto childTask =  InitialTaskNode<OutputType>::create
 		(
 			std::forward<FirstCallable>(firstCallable)
 		);
@@ -30,7 +18,7 @@ TaskRef AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, FirstCalla
 template <typename OutputType, typename ParentTask,  typename  Callable>
 TaskRef AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, Callable&&  callable)
 {
-	auto childTask = std::make_shared<InitialTaskNode<OutputType>>
+	auto childTask = InitialTaskNode<OutputType>::create
 		(
 			std::forward<Callable>(callable)
 		);
@@ -38,6 +26,18 @@ TaskRef AddSubtaskSequence(TaskGraph& graph, ParentTask&& parentTask, Callable&&
 	graph.AddTaskEdge(std::forward<ParentTask>(parentTask), childTask);
 
 	return childTask;
+}
+
+template <typename OutputType, typename FirstCallable, typename  ... Callables>
+TaskRef AddTaskSequence(TaskGraph& graph, FirstCallable&& firstCallable, Callables&& ... callables)
+{
+	auto task = InitialTaskNode<OutputType>::create
+		(
+			std::forward<FirstCallable>(firstCallable)
+			);
+
+	graph.AddTask(task);
+	return AddSubtaskSequence<OutputType>(graph, task, std::forward<Callables>(callables)...);
 }
 
 template <typename OutputType, typename CallableType>
@@ -48,7 +48,7 @@ void ParallelFor(TaskGraph& graph, unsigned int chunksCount, CallableType&& call
 
 	for (unsigned int taskNumber = 0; taskNumber < chunksCount; ++taskNumber)
 	{
-		auto task = std::make_shared<ParallelTaskNode<OutputType>>
+		auto task = ParallelTaskNode<OutputType>::create
 			(
 				taskNumber,
 				std::forward<CallableType>(callable)
@@ -88,7 +88,7 @@ TaskRef ParallelReduce(TaskGraph& graph, TaskRef& parent, unsigned int chnksCoun
 
 	for (unsigned int taskNumber = 0; taskNumber < chnksCount; ++taskNumber)
 	{
-		auto task = std::make_shared<ParallelTaskNode<OutputType>>
+		auto task = ParallelTaskNode<OutputType>::create
 			(
 				taskNumber,
 				std::forward<CallableType>(callable)
@@ -103,8 +103,8 @@ TaskRef ParallelReduce(TaskGraph& graph, TaskRef& parent, unsigned int chnksCoun
 
 		parTasks.push_back(task);
 	}
-	auto reduceTask = std::make_shared<MultiJoinTaskNode<OutputType>>
-		(
+
+	auto reduceTask = MultiJoinTaskNode<OutputType>::create(
 			std::forward<ReduceCallableType>(reduceCallable),
 			parTasks
 			);

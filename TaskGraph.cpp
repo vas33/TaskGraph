@@ -20,21 +20,22 @@ void Test1()
 	int result = 0;
 
 	//Spawn th 1
-	
-	std::shared_ptr<TaskBase> produceSomeInt = make_shared<InitialTaskNode<int>>([]()->int
+
+	auto produceSomeInt = InitialTaskNode<int>::create([]()->int
 	{
 		return 1000;
 	});
+	
 
 	//Spawn th 2
-	std::shared_ptr<TaskNode<int, int>> doComplexCalculations = make_shared<TaskNode<int, int>>(
+	std::shared_ptr<TaskNode<int, int>> doComplexCalculations = TaskNode<int, int>::create(
 		produceSomeInt,
 		[&](int input) ->int
 	{
 
 			TaskGraph subGraph(1);
 			////add dynamic task
-			auto  node = make_shared<InitialTaskNode<int>>(
+			auto  node = InitialTaskNode<int>::create(
 				[]()->int
 			{
 				return 500;
@@ -42,7 +43,7 @@ void Test1()
 			);
 			subGraph.AddTask(node);
 
-			auto nodePlusOne = make_shared<TaskNode<int, int>>
+			auto nodePlusOne = TaskNode<int, int>::create
 				(	node,
 					[](int input)
 					{
@@ -61,6 +62,8 @@ void Test1()
 	produceSomeInt->SetAffinity({ 2 });
 	graph.AddTask(produceSomeInt);
 	graph.AddTaskEdge(produceSomeInt, doComplexCalculations);
+
+	auto task = produceSomeInt;
 
 	graph.WaitAll();
 
@@ -194,7 +197,7 @@ void Test3()
 		std::make_shared<ch01::Image>("fractal_tinted",
 			ch01::IMAGE_WIDTH, ch01::IMAGE_HEIGHT);
 
-	TaskRef generateImageTask = std::make_shared<InitialTaskNode<int>>
+	TaskRef generateImageTask = InitialTaskNode<int>::create
 		(
 			[&image]()->int
 			{
@@ -292,7 +295,7 @@ void Test5()
 			std::cout << "Done increase PNG channel right \n";			
 		});
 
-	TaskRef mergeImages = std::make_shared<MultiJoinTaskNode<void>>
+		TaskRef mergeImages = MultiJoinTaskNode<void>::create
 		(
 			[&leftImage, &rightImage](){
 			mergePNGImages(leftImage, rightImage);
@@ -301,7 +304,7 @@ void Test5()
 		},
 			std::vector<TaskRef>{ increaseLeftPNGChannel, increaseRightPNGChannel }
 	);
-	TaskRef writeResult = std::make_shared<InitialTaskNode<void>>
+	TaskRef writeResult = InitialTaskNode<void>::create
 		(
 			[&leftImage]() -> void {
 				leftImage.write();
@@ -317,7 +320,6 @@ void Test5()
 	cout <<"\nTest 5 Done \n";
 }
 
-
 int main()
 {
 	Test1();
@@ -325,7 +327,6 @@ int main()
 	Test3();
 	Test4();
 	Test5();
-
 
 	cout << "\nType a word and pres [Enter] to exit\n";
 	char z;

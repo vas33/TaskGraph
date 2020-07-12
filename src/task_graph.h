@@ -6,10 +6,10 @@
 
 class WorkerThread
 {
-	std::shared_ptr<TaskController> _controller;
-	std::queue<TaskId>  _tasks{};
 	unsigned int _threadNumber{ 0 };
 	const TasksCollection& _tasksData;
+	std::queue<TaskId>  _tasks{};
+	std::shared_ptr<TaskController> _controller;
 public:
 	explicit WorkerThread(TasksCollection& tasksData, unsigned int threadNumber) :
 		_threadNumber(threadNumber),
@@ -115,6 +115,14 @@ public:
 	{
 	}
 
+	TaskGraph(const TaskGraph&) = delete;
+
+	TaskGraph(TaskGraph&&) = delete;
+
+	TaskGraph& operator=(const TaskGraph&) = delete;
+	
+	TaskGraph& operator=(const TaskGraph&&) = delete;
+
 	void AddTask(TaskRef task)
 	{
 		AddToTasks(task);
@@ -189,6 +197,7 @@ public:
 		//shutdown threads
 		DoneAndExit();
 	}
+
 private:
 	void CleanUp()
 	{

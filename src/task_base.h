@@ -121,6 +121,27 @@ public:
 
 	TaskBase() = default;
 
+	TaskBase(TaskBase& other):
+		_affinity(other._affinity),
+		_taskId(GetNextTaskId())
+	{
+	}
+
+	TaskBase& operator=(const TaskBase& other)
+	{
+		if (this != &other)
+		{			
+			_affinity = other._affinity;
+			//taskid has to be unique
+			_taskId = GetNextTaskId();
+		}
+		return *this;
+	}
+
+	TaskBase(TaskBase&& other) = default;
+	
+	TaskBase& operator=(TaskBase&& other) = default;
+
 	virtual ~TaskBase() = default;
 	
 	TaskId GetTaskId() const
