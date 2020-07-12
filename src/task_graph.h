@@ -59,16 +59,15 @@ private:
 
 			while (true)
 			{
-				_tasks.swap(_controller->GetOneTaskFromPending(_threadNumber));
+				_tasks.swap(_controller->GetSomeTaskJobs(_threadNumber));
 				if (_tasks.empty())
 				{
-					//signal we need more jobs
-					_controller->LookForOtherJob(_threadNumber);
 					//no tasks available wait for more
 					break;
 				}
 
 				//process tasks
+				std::vector<TaskId> readyTasks;
 				while (!_tasks.empty())
 				{
 					//get next task
@@ -81,8 +80,9 @@ private:
 						it->second->Run();
 					}
 								
-					_controller->SignalTaskReady(taskId);
+					readyTasks.push_back(taskId);
 				}
+				_controller->SignalTasksReady(std::move(readyTasks));
 			}
 	
 		}
@@ -190,7 +190,6 @@ public:
 			else
 			{
 				WaitForReadyTasks();
-				RescheduleTaskJobs();
 			}
 		}
 
@@ -305,10 +304,5 @@ private:
 		_taskController->AddTaskJobs(move(_pendingTasks), _tasks);
 
 		_pendingTasks.clear();
-	}
-
-	void RescheduleTaskJobs()
-	{
-		_taskController->RescheduleTaskJobs();
 	}
 };

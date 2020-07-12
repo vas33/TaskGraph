@@ -23,7 +23,6 @@ struct TaskResult
 	virtual OutputType GetResult() const = 0;
 };
 
-
 class TaskAffinity
 {
 	std::bitset<32> _affinityBits;
@@ -217,36 +216,68 @@ public:
 		return _readyToExit;
 	}
 
-	std::queue<TaskId> GetOneTaskFromPending(unsigned int threadNumber)
+	std::queue<TaskId> StealSomeTaskJobs(unsigned int lookingThreadId)
+	{
+		//locked from outside
+		std::queue<TaskId> tasks;
+
+		for (unsigned int threadId = 0; threadId < _taskJobs.size(); ++threadId)
+		{
+			auto&  tasksCollection = _taskJobs[threadId];
+
+			if (threadId != lookingThreadId && tasksCollection.size() > 1)
+			{
+				std::cout << "\n\nThread:" << lookingThreadId << " steals from Thread:" << threadId << "\n\n";
+
+				//give thread some tasks ;) ( not matter the affinity)
+
+				//steal half of the tasks
+				auto itMiddle = std::next(tasksCollection.begin(), tasksCollection.size() / 2);
+
+				for (auto it = itMiddle; it != tasksCollection.end(); ++it)
+				{
+					tasks.emplace(std::move(*it));
+				}
+
+				tasksCollection.erase(itMiddle, tasksCollection.end());
+
+				break;
+			}
+		}
+		return tasks;
+	}
+
+	std::queue<TaskId> GetSomeTaskJobs(unsigned int threadNumber)
 	{
 		std::queue<TaskId> tasks;
 		
 		{
 			std::unique_lock<std::mutex> lock(_mutexJobs);
-			if (_taskJobs[threadNumber].size() > 0)
+			auto& threadJobs = _taskJobs[threadNumber];
+			if (threadJobs.size() > 0)
 			{
-				tasks.emplace(_taskJobs[threadNumber].front());
-				_taskJobs[threadNumber].pop_front();
+
+				auto halfSize = threadJobs.size() >> 1;
+				halfSize = halfSize > 0 ? halfSize : 1;
+
+				auto itMiddle = std::next(threadJobs.begin(), halfSize);
+
+				for (auto it = threadJobs.begin(); it != itMiddle; ++it)
+				{
+					tasks.emplace(std::move(*it));
+				}
+					
+				threadJobs.erase(threadJobs.begin(), itMiddle);
+			}
+			else
+			{
+				//steal some tasks if available
+				tasks.swap(StealSomeTaskJobs(threadNumber));
 			}
 		}
 		
 
 		return move(tasks);
-	}
-
-	std::queue<TaskId> GetAllPendingTasks(unsigned int threadNumber)
-	{
-		std::unique_lock<std::mutex> lock(_mutexJobs);
-
-		std::queue<TaskId> tasks;
-		auto& taskJobs = _taskJobs[threadNumber];
-		for (auto it = taskJobs.begin(); it < taskJobs.end(); ++it)
-		{
-			tasks.emplace(std::move(*it));
-		}
-		taskJobs.clear();
-
-		return tasks;
 	}
 
 	void AddTaskJobs(std::vector<TaskId>&& taskIds, const TasksCollection& tasks)
@@ -289,6 +320,16 @@ public:
 		_cvReadyTasks.notify_all();
 	}
 
+	void SignalTasksReady(std::vector<TaskId>&& tasks)
+	{
+		{
+			std::unique_lock<std::mutex> lock(_mutexReadyTasks);
+
+			std::move(tasks.begin(), tasks.end(), std::back_inserter(_readyTasks));						
+		}
+		_cvReadyTasks.notify_one();
+	}
+
 	void SignalTaskReady(TaskId taskId)
 	{		
 		{
@@ -309,59 +350,4 @@ public:
 		_readyTasks.clear();
 		_readyToExit = false;		
 	}
-
-	void LookForOtherJob(unsigned int threadNumber)
-	{
-		{
-			std::unique_lock<std::mutex> lock(_mutexReadyTasks);
-			_threadsLookingForJob.emplace(threadNumber);
-		}
-		_cvReadyTasks.notify_one();
-
-	}
-
-	void RescheduleTaskJobs()
-	{
-		if(!_threadsLookingForJob.empty())
-		{
-			{
-				std::lock(_mutexJobs, _mutexReadyTasks);
-
-				const std::lock_guard<std::mutex> l1(_mutexJobs, std::adopt_lock);
-				const std::lock_guard<std::mutex> l2(_mutexReadyTasks, std::adopt_lock);
-
-				while (!_threadsLookingForJob.empty())
-				{
-					auto lookingThreadId = _threadsLookingForJob.front();
-					_threadsLookingForJob.pop();
-
-					for (unsigned int threadId = 0; threadId < _taskJobs.size(); ++threadId)
-					{
-						if (threadId != lookingThreadId && _taskJobs[threadId].size() > 1)
-						{
-							std::cout << "\n\nThread:" << lookingThreadId << " steals from Thread:" << threadId << "\n\n";
-
-							//give thread some tasks ;) ( not matter the affinity)
-
-							auto&  tasksCollection = _taskJobs[threadId];
-
-							auto& recieverTasks = _taskJobs[lookingThreadId];
-							
-							//steal half of the tasks
-							auto itMiddle = std::next(tasksCollection.begin(), tasksCollection.size() / 2);
-
-							std::move(itMiddle, tasksCollection.end(), std::back_inserter(recieverTasks));
-							
-							tasksCollection.erase(itMiddle, tasksCollection.end());														
-
-							break;
-						}
-					}
-				}
-			}
-			_cvJobs.notify_all();
-		}
-	}
-
-
 };
